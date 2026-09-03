@@ -664,7 +664,24 @@ func resolveCommandBeadsDir(dbPath string) string {
 		return beadsDir
 	}
 
-	for dir := filepath.Dir(dbPath); dir != "" && dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+	// Absolutise before walking. A RELATIVE dbPath terminates the walk one
+	// iteration early: filepath.Dir(".") == ".", so the guard
+	// dir != filepath.Dir(dir) is false at "." and the loop body never runs
+	// for the current directory. With dbPath ".beads/embeddeddolt/gt" the walk
+	// tests ".beads/embeddeddolt/.beads" and ".beads/.beads", then stops
+	// WITHOUT ever testing "./.beads" -- the correct answer. It then falls
+	// through to filepath.Dir(dbPath), finds no config there, and silently
+	// opens the DEFAULT-NAMED database instead of the one named on the command
+	// line, reporting success against an empty store.
+	//
+	// MEASURED on a real workspace, same cwd and second (gt-irl):
+	//   bd --db .beads/embeddeddolt/gt list --status open              -> 0 issues + warning
+	//   bd --db /abs/path/.beads/embeddeddolt/gt list --status open    -> 192 issues, no warning
+	walkStart := dbPath
+	if abs, err := filepath.Abs(walkStart); err == nil {
+		walkStart = abs
+	}
+	for dir := filepath.Dir(walkStart); dir != "" && dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 		candidate := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
